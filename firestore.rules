@@ -1,0 +1,114 @@
+// firestore.rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // === Helpers ===
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return request.auth.uid == uid;
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isTeacher() {
+      return getUserRole() == 'teacher';
+    }
+
+    function isClassroomMember(classroomId) {
+      return exists(/databases/$(database)/documents/classrooms/$(classroomId)/members/$(request.auth.uid));
+    }
+
+    function isClassroomTeacher(classroomId) {
+      return get(/databases/$(database)/documents/classrooms/$(classroomId)).data.teacherId == request.auth.uid;
+    }
+
+    // === Users ===
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && isOwner(userId);
+      allow delete: if false;
+    }
+
+    // === Classrooms ===
+    match /classrooms/{classroomId} {
+      allow read: if isAuthenticated() && isClassroomMember(classroomId);
+      allow create: if isAuthenticated() && isTeacher();
+      allow update: if isAuthenticated() && isClassroomTeacher(classroomId);
+      allow delete: if isAuthenticated() && isClassroomTeacher(classroomId);
+
+      // Members
+      match /members/{memberId} {
+        allow read: if isAuthenticated() && isClassroomMember(classroomId);
+        allow create: if isAuthenticated() && (isOwner(memberId) || isClassroomTeacher(classroomId));
+        allow update: if isAuthenticated() && isClassroomTeacher(classroomId);
+        allow delete: if isAuthenticated() && (isOwner(memberId) || isClassroomTeacher(classroomId));
+      }
+
+      // Resources
+      match /resources/{resourceId} {
+        allow read: if isAuthenticated() && isClassroomMember(classroomId);
+        allow create: if isAuthenticated() && isClassroomTeacher(classroomId);
+        allow update: if isAuthenticated() && isClassroomTeacher(classroomId);
+        allow delete: if isAuthenticated() && isClassroomTeacher(classroomId);
+
+        // Resource comments
+        match /comments/{commentId} {
+          allow read: if isAuthenticated() && isClassroomMember(classroomId);
+          allow create: if isAuthenticated() && isClassroomMember(classroomId)
+            && request.resource.data.authorId == request.auth.uid;
+          allow delete: if isAuthenticated() && (
+            isOwner(resource.data.authorId) || isClassroomTeacher(classroomId)
+          );
+          allow update: if false;
+        }
+      }
+
+      // Assignments
+      match /assignments/{assignmentId} {
+        allow read: if isAuthenticated() && isClassroomMember(classroomId);
+        allow create: if isAuthenticated() && isClassroomTeacher(classroomId);
+        allow update: if isAuthenticated() && isClassroomTeacher(classroomId);
+        allow delete: if isAuthenticated() && isClassroomTeacher(classroomId);
+
+        // Submissions
+        match /submissions/{studentId} {
+          allow read: if isAuthenticated() && (
+            isOwner(studentId) || isClassroomTeacher(classroomId)
+          );
+          allow create: if isAuthenticated() && isOwner(studentId) && isClassroomMember(classroomId);
+          allow update: if isAuthenticated() && (
+            isOwner(studentId) || isClassroomTeacher(classroomId)
+          );
+          allow delete: if false;
+        }
+
+        // Assignment comments
+        match /comments/{commentId} {
+          allow read: if isAuthenticated() && isClassroomMember(classroomId);
+          allow create: if isAuthenticated() && isClassroomMember(classroomId)
+            && request.resource.data.authorId == request.auth.uid;
+          allow delete: if isAuthenticated() && (
+            isOwner(resource.data.authorId) || isClassroomTeacher(classroomId)
+          );
+          allow update: if false;
+        }
+      }
+    }
+
+    // === Notifications ===
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && isOwner(resource.data.userId);
+      allow create: if false; // Créées uniquement via Cloud Functions
+      allow update: if isAuthenticated() && isOwner(resource.data.userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow delete: if false;
+    }
+  }
+}

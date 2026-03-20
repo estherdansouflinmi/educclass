@@ -1,0 +1,48 @@
+// storage.rules
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isFileSizeValid() {
+      return request.resource.size < 50 * 1024 * 1024; // 50MB max
+    }
+
+    function isPdfOrCommonFile() {
+      return request.resource.contentType.matches('application/pdf')
+        || request.resource.contentType.matches('image/.*')
+        || request.resource.contentType.matches('application/.*');
+    }
+
+    // Classroom resources (PDF, etc.)
+    match /classrooms/{classroomId}/resources/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated()
+        && isFileSizeValid()
+        && isPdfOrCommonFile();
+      allow delete: if isAuthenticated();
+    }
+
+    // Student submissions
+    match /classrooms/{classroomId}/submissions/{assignmentId}/{studentId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated()
+        && request.auth.uid == studentId
+        && isFileSizeValid();
+      allow delete: if isAuthenticated() && request.auth.uid == studentId;
+    }
+
+    // Profile pictures
+    match /users/{userId}/avatar/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated()
+        && request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+    }
+  }
+}
